@@ -848,9 +848,23 @@ class Canvas(QtWidgets.QWidget):
 
         p.drawPixmap(0, 0, self.pixmap)
 
+
+        # 在缩放的坐标系中绘制ROI（不要反向缩放）
+        if self.roi_selecting and self.roi_rect and self.roi_start_pos and self.roi_end_pos:
+            pen = QtGui.QPen(QtGui.QColor(255, 0, 0), 2.0 / self.scale, Qt.DashLine)
+            p.setPen(pen)
+            brush = QtGui.QBrush(QtGui.QColor(255, 0, 0, 30))
+            p.setBrush(brush)
+
+            x = min(self.roi_start_pos.x(), self.roi_end_pos.x())
+            y = min(self.roi_start_pos.y(), self.roi_end_pos.y())
+            width = abs(self.roi_end_pos.x() - self.roi_start_pos.x())
+            height = abs(self.roi_end_pos.y() - self.roi_start_pos.y())
+            p.drawRect(QtCore.QRectF(x, y, width, height))
+
         p.scale(1 / self.scale, 1 / self.scale)
 
-        
+
         # draw crosshair
         if (
             self._crosshair[self._createMode]
