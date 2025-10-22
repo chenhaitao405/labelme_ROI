@@ -1028,7 +1028,7 @@ class MainWindow(QtWidgets.QMainWindow):
         control_widget.setLayout(layout)
 
         # 创建停靠窗口
-        self.wl_dock = QDockWidget("医学图像调整", self)
+        self.wl_dock = QDockWidget("焊口窗位调整", self)
         self.wl_dock.setWidget(control_widget)
         self.addDockWidget(Qt.RightDockWidgetArea, self.wl_dock)
 
