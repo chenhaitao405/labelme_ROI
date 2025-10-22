@@ -41,6 +41,13 @@ from labelme.widgets import UniqueLabelQListWidget
 from labelme.widgets import ZoomWidget
 from labelme.widgets import download_ai_model
 
+
+import cv2
+from PyQt5.QtWidgets import (QDockWidget, QWidget, QVBoxLayout,
+                            QHBoxLayout, QLabel, QSlider, QSpinBox,
+                            QPushButton, QGroupBox)
+
+
 from . import utils
 
 # FIXME
@@ -198,6 +205,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.canvas.drawingPolygon.connect(self.toggleDrawingSensitive)
 
         self.setCentralWidget(scrollArea)
+
+        # 添加窗宽窗位功能
+        self.setupWindowLevelControls()
+
+        # 连接ROI信号
+        self.canvas.roiSelected.connect(self.onROISelected)
 
         features = QtWidgets.QDockWidget.DockWidgetFeatures()
         for dock in ["flag_dock", "label_dock", "shape_dock", "file_dock"]:
@@ -952,6 +965,206 @@ class MainWindow(QtWidgets.QMainWindow):
         # if self.firstStart:
         #    QWhatsThis.enterWhatsThisMode()
 
+    def setupWindowLevelControls(self):
+        """设置窗宽窗位控制面板"""
+        # 创建控制组件
+        control_widget = QWidget()
+        layout = QVBoxLayout()
+
+        # 窗宽窗位组
+        wl_group = QGroupBox("窗宽窗位调整")
+        wl_layout = QVBoxLayout()
+
+        # 窗宽控制
+        ww_layout = QHBoxLayout()
+        ww_layout.addWidget(QLabel("窗宽:"))
+        self.ww_slider = QSlider(Qt.Horizontal)
+        self.ww_slider.setRange(0, 255)
+        self.ww_slider.setValue(256)
+        self.ww_spinbox = QSpinBox()
+        self.ww_spinbox.setRange(0, 255)
+        self.ww_spinbox.setValue(256)
+        ww_layout.addWidget(self.ww_slider)
+        ww_layout.addWidget(self.ww_spinbox)
+        wl_layout.addLayout(ww_layout)
+
+        # 窗位控制
+        wl_h_layout = QHBoxLayout()
+        wl_h_layout.addWidget(QLabel("窗位:"))
+        self.wl_slider = QSlider(Qt.Horizontal)
+        self.wl_slider.setRange(0, 256)
+        self.wl_slider.setValue(128)
+        self.wl_spinbox = QSpinBox()
+        self.wl_spinbox.setRange(0, 255)
+        self.wl_spinbox.setValue(128)
+        wl_h_layout.addWidget(self.wl_slider)
+        wl_h_layout.addWidget(self.wl_spinbox)
+        wl_layout.addLayout(wl_h_layout)
+
+        # 预设按钮
+        preset_layout = QHBoxLayout()
+        self.btn_bone = QPushButton("骨窗")
+        self.btn_lung = QPushButton("肺窗")
+        self.btn_soft = QPushButton("软组织")
+        self.btn_reset = QPushButton("重置")
+        preset_layout.addWidget(self.btn_bone)
+        preset_layout.addWidget(self.btn_lung)
+        preset_layout.addWidget(self.btn_soft)
+        preset_layout.addWidget(self.btn_reset)
+        wl_layout.addLayout(preset_layout)
+
+        wl_group.setLayout(wl_layout)
+        layout.addWidget(wl_group)
+
+        # ROI信息显示
+        roi_group = QGroupBox("ROI统计信息")
+        roi_layout = QVBoxLayout()
+        self.roi_info_label = QLabel("请使用Ctrl+右键选择ROI")
+        roi_layout.addWidget(self.roi_info_label)
+        roi_group.setLayout(roi_layout)
+        layout.addWidget(roi_group)
+
+        layout.addStretch()
+        control_widget.setLayout(layout)
+
+        # 创建停靠窗口
+        self.wl_dock = QDockWidget("医学图像调整", self)
+        self.wl_dock.setWidget(control_widget)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.wl_dock)
+
+        # 连接信号
+        self.ww_slider.valueChanged.connect(self.ww_spinbox.setValue)
+        self.ww_spinbox.valueChanged.connect(self.ww_slider.setValue)
+        self.wl_slider.valueChanged.connect(self.wl_spinbox.setValue)
+        self.wl_spinbox.valueChanged.connect(self.wl_slider.setValue)
+
+        self.ww_slider.valueChanged.connect(self.applyWindowLevel)
+        self.wl_slider.valueChanged.connect(self.applyWindowLevel)
+
+        # 预设按钮连接
+        self.btn_bone.clicked.connect(lambda: self.setPreset(2000, 400))
+        self.btn_lung.clicked.connect(lambda: self.setPreset(1500, -600))
+        self.btn_soft.clicked.connect(lambda: self.setPreset(400, 50))
+        self.btn_reset.clicked.connect(self.resetWindowLevel)
+
+        # 初始化图像变量
+        self.original_image = None
+        self.display_image = None
+
+    def apply_window_level(self, image, window_width, window_level, output_bits=8):
+        """应用窗宽窗位变换"""
+        window_min = window_level - window_width / 2
+        window_max = window_level + window_width / 2
+
+        output = np.zeros_like(image)
+        if output_bits == 8:
+            max_val = 255
+            dtype = np.uint8
+        else:
+            max_val = 65535
+            dtype = np.uint16
+
+        mask = (image >= window_min) & (image <= window_max)
+        output[mask] = ((image[mask] - window_min) / window_width * max_val)
+        output[image < window_min] = 0
+        output[image > window_max] = max_val
+
+        return output.astype(dtype)
+
+    def onROISelected(self, roi):
+        """处理ROI选择完成"""
+        if not roi or self.original_image is None:
+            return
+
+        x1, y1, x2, y2 = roi
+
+        # 检查ROI有效性
+        if abs(x2 - x1) < 10 or abs(y2 - y1) < 10:
+            self.roi_info_label.setText("ROI太小，请重新选择")
+            return
+
+        # 提取ROI像素
+        roi_pixels = self.original_image[y1:y2 + 1, x1:x2 + 1]
+
+        if roi_pixels.size > 0:
+            # 计算统计信息
+            roi_min = np.min(roi_pixels)
+            roi_max = np.max(roi_pixels)
+            roi_mean = np.mean(roi_pixels)
+            roi_std = np.std(roi_pixels)
+
+            # 计算窗宽窗位
+            new_wl = int(roi_mean)
+            new_ww = int(min(4 * roi_std, roi_max - roi_min))
+            new_ww = max(1, new_ww)
+
+            # 更新控件
+            self.ww_slider.setValue(new_ww)
+            self.wl_slider.setValue(new_wl)
+
+            # 更新信息显示
+            info_text = (
+                f"ROI大小: {x2 - x1 + 1}×{y2 - y1 + 1}\\n"
+                f"最小值: {roi_min:.1f}\\n"
+                f"最大值: {roi_max:.1f}\\n"
+                f"平均值: {roi_mean:.1f}\\n"
+                f"标准差: {roi_std:.1f}\\n"
+                f"建议窗宽: {new_ww}\\n"
+                f"建议窗位: {new_wl}"
+            )
+            self.roi_info_label.setText(info_text)
+
+            # 更新状态栏
+            self.statusBar().showMessage(
+                f"ROI分析完成 - 窗宽:{new_ww} 窗位:{new_wl}",
+                5000
+            )
+
+    def applyWindowLevel(self):
+        """应用当前的窗宽窗位设置"""
+        if self.original_image is None:
+            return
+
+        ww = self.ww_slider.value()
+        wl = self.wl_slider.value()
+
+        # 应用变换
+        adjusted = self.apply_window_level(self.original_image, ww, wl)
+
+        # 转换为QPixmap
+        if len(adjusted.shape) == 2:
+            # 灰度图
+            height, width = adjusted.shape
+
+            # 创建RGB图像（灰度显示）
+            rgb_image = np.stack([adjusted, adjusted, adjusted], axis=2)
+
+            # 转换为QImage
+            bytes_per_line = 3 * width
+            q_image = QtGui.QImage(
+                rgb_image.data,
+                width, height,
+                bytes_per_line,
+                QtGui.QImage.Format_RGB888
+            )
+
+            # 转换为QPixmap并显示
+            pixmap = QtGui.QPixmap.fromImage(q_image)
+            self.canvas.loadPixmap(pixmap, clear_shapes=False)
+
+    def setPreset(self, ww, wl):
+        """设置预设的窗宽窗位"""
+        self.ww_slider.setValue(ww)
+        self.wl_slider.setValue(wl)
+
+    def resetWindowLevel(self):
+        """重置窗宽窗位到默认值"""
+        if self.original_image is not None:
+            img_min = np.min(self.original_image)
+            img_max = np.max(self.original_image)
+            self.ww_slider.setValue(int(img_max - img_min))
+            self.wl_slider.setValue(int((img_min + img_max) / 2))
+
     def menu(self, title, actions=None):
         menu = self.menuBar().addMenu(title)
         if actions:
@@ -1687,7 +1900,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.fileListWidget.repaint()
             return
 
+
         self.resetState()
+        self.loadImage(filename)
         self.canvas.setEnabled(False)
         if filename is None:
             filename = self.settings.value("filename", "")
@@ -1783,7 +1998,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self.toggleActions(True)
         self.canvas.setFocus()
         self.show_status_message(self.tr("Loaded %s") % osp.basename(filename))
+
         return True
+
+    # 修改loadImage方法以保存原始图像数据
+    def loadImage(self, filename):
+        """加载图像并保存原始数据"""
+
+        # 读取原始图像数据
+        try:
+            # 使用cv2读取（支持多种格式）
+            image = cv2.imread(filename, cv2.IMREAD_UNCHANGED)
+
+            if image is not None:
+                # 转换为灰度（如果需要）
+                if len(image.shape) == 3:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+                # 保存为浮点数以保留精度
+                self.original_image = image.astype(np.float32)
+
+                # 初始化窗宽窗位
+                self.resetWindowLevel()
+
+        except Exception as e:
+            logger.warning(f"Failed to load image for window/level: {e}")
 
     def resizeEvent(self, event):
         if (

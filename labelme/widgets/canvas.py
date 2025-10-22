@@ -43,6 +43,8 @@ class Canvas(QtWidgets.QWidget):
     vertexSelected = QtCore.pyqtSignal(bool)
     mouseMoved = QtCore.pyqtSignal(QPointF)
     statusUpdated = QtCore.pyqtSignal(str)
+    # 添加ROI选择完成信号
+    roiSelected = QtCore.pyqtSignal(tuple)  # 发送(x1, y1, x2, y2)
 
     CREATE, EDIT = 0, 1
 
@@ -85,6 +87,11 @@ class Canvas(QtWidgets.QWidget):
             },
         )
         super().__init__(*args, **kwargs)
+        # 添加ROI相关成员变量
+        self.roi_selecting = False
+        self.roi_start_pos = None
+        self.roi_end_pos = None
+        self.roi_rect_item = None
         # Initialise local state.
         self.mode = self.EDIT
         self.shapes = []
@@ -302,6 +309,16 @@ class Canvas(QtWidgets.QWidget):
         except AttributeError:
             return
 
+        # ROI选择检测
+        if self.roi_selecting and self.roi_start_pos:
+            pos = self.transformPos(ev.localPos())
+            self.roi_end_pos = pos
+            if self.roi_rect:
+                self.roi_rect['end'] = pos
+            self.repaint()
+            ev.accept()
+            return
+
         self.mouseMoved.emit(pos)
 
         self.prevMovePoint = pos
@@ -480,6 +497,16 @@ class Canvas(QtWidgets.QWidget):
         pos: QPointF = self.transformPos(ev.localPos())
 
         is_shift_pressed = ev.modifiers() & Qt.ShiftModifier
+        # ROI选择检测
+        if (ev.button() == Qt.RightButton and
+                ev.modifiers() & Qt.ControlModifier):
+            self.roi_selecting = True
+            pos = self.transformPos(ev.localPos())  # 使用transformPos而不是mapToScene
+            self.roi_start_pos = pos
+            self.roi_rect = {'start': pos, 'end': pos}
+            self.repaint()
+            ev.accept()
+            return
 
         if ev.button() == Qt.LeftButton:
             if self.drawing():
@@ -565,7 +592,62 @@ class Canvas(QtWidgets.QWidget):
             self.prevPoint = pos
         self._update_status()
 
+    def convertROIToImageCoords(self):
+        """将ROI场景坐标转换为图像坐标"""
+        if not self.pixmap or not self.roi_start_pos or not self.roi_end_pos:
+            return None
+
+        # 获取场景中的ROI坐标
+        x1 = min(self.roi_start_pos.x(), self.roi_end_pos.x())
+        x2 = max(self.roi_start_pos.x(), self.roi_end_pos.x())
+        y1 = min(self.roi_start_pos.y(), self.roi_end_pos.y())
+        y2 = max(self.roi_start_pos.y(), self.roi_end_pos.y())
+
+        # 转换为图像坐标（考虑缩放）
+        img_width = self.pixmap.width()
+        img_height = self.pixmap.height()
+
+        # 场景到图像的转换（简化版本）
+        img_x1 = int(max(0, min(x1, img_width - 1)))
+        img_x2 = int(max(0, min(x2, img_width - 1)))
+        img_y1 = int(max(0, min(y1, img_height - 1)))
+        img_y2 = int(max(0, min(y2, img_height - 1)))
+
+        return (img_x1, img_y1, img_x2, img_y2)
+
     def mouseReleaseEvent(self, ev):
+
+        # ROI选择检测
+        if ev.button() == Qt.RightButton and self.roi_selecting:
+            self.roi_selecting = False
+
+            if self.roi_start_pos and self.roi_end_pos:
+                # 计算ROI坐标
+                x1 = min(self.roi_start_pos.x(), self.roi_end_pos.x())
+                x2 = max(self.roi_start_pos.x(), self.roi_end_pos.x())
+                y1 = min(self.roi_start_pos.y(), self.roi_end_pos.y())
+                y2 = max(self.roi_start_pos.y(), self.roi_end_pos.y())
+
+                if self.pixmap:
+                    img_width = self.pixmap.width()
+                    img_height = self.pixmap.height()
+
+                    img_x1 = int(max(0, min(x1, img_width - 1)))
+                    img_x2 = int(max(0, min(x2, img_width - 1)))
+                    img_y1 = int(max(0, min(y1, img_height - 1)))
+                    img_y2 = int(max(0, min(y2, img_height - 1)))
+
+                    if abs(img_x2 - img_x1) >= 10 and abs(img_y2 - img_y1) >= 10:
+                        roi = (img_x1, img_y1, img_x2, img_y2)
+                        self.roiSelected.emit(roi)
+
+            self.roi_rect = None
+            self.roi_start_pos = None
+            self.roi_end_pos = None
+            self.repaint()
+            ev.accept()
+            return
+
         if ev.button() == Qt.RightButton:
             menu = self.menus[len(self.selectedShapesCopy) > 0]
             self.restoreCursor()
@@ -768,6 +850,7 @@ class Canvas(QtWidgets.QWidget):
 
         p.scale(1 / self.scale, 1 / self.scale)
 
+        
         # draw crosshair
         if (
             self._crosshair[self._createMode]
@@ -835,6 +918,8 @@ class Canvas(QtWidgets.QWidget):
         drawing_shape.fill = self.fillDrawing()
         drawing_shape.selected = self.fillDrawing()
         drawing_shape.paint(p)
+
+
         p.end()
 
     def transformPos(self, point: QPointF) -> QPointF:
