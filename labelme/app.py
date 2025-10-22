@@ -1003,9 +1003,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 预设按钮
         preset_layout = QHBoxLayout()
-        self.btn_bone = QPushButton("骨窗")
-        self.btn_lung = QPushButton("肺窗")
-        self.btn_soft = QPushButton("软组织")
+        self.btn_bone = QPushButton("窗位1")
+        self.btn_lung = QPushButton("窗位2")
+        self.btn_soft = QPushButton("窗位3")
         self.btn_reset = QPushButton("重置")
         preset_layout.addWidget(self.btn_bone)
         preset_layout.addWidget(self.btn_lung)
@@ -1042,9 +1042,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.wl_slider.valueChanged.connect(self.applyWindowLevel)
 
         # 预设按钮连接
-        self.btn_bone.clicked.connect(lambda: self.setPreset(2000, 400))
-        self.btn_lung.clicked.connect(lambda: self.setPreset(1500, -600))
-        self.btn_soft.clicked.connect(lambda: self.setPreset(400, 50))
+        self.btn_bone.clicked.connect(lambda: self.setPreset(125, 125))
+        self.btn_lung.clicked.connect(lambda: self.setPreset(100, 50))
+        self.btn_soft.clicked.connect(lambda: self.setPreset(50, 50))
         self.btn_reset.clicked.connect(self.resetWindowLevel)
 
         # 初始化图像变量
