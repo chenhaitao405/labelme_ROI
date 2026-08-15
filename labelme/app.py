@@ -206,7 +206,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.setCentralWidget(scrollArea)
 
-        # 添加窗宽窗位功能
+        # 添加窗宽功能
         self.setupWindowLevelControls()
 
         # 连接ROI信号
@@ -2005,24 +2005,50 @@ class MainWindow(QtWidgets.QMainWindow):
     def loadImage(self, filename):
         """加载图像并保存原始数据"""
 
-        # 读取原始图像数据
+        self.original_image = None
+        if not filename:
+            return
+
+        # 读取原始图像数据，兼容包含中文或特殊字符的路径
         try:
-            # 使用cv2读取（支持多种格式）
-            image = cv2.imread(filename, cv2.IMREAD_UNCHANGED)
-
-            if image is not None:
-                # 转换为灰度（如果需要）
-                if len(image.shape) == 3:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-                # 保存为浮点数以保留精度
-                self.original_image = image.astype(np.float32)
-
-                # 初始化窗宽窗位
-                self.resetWindowLevel()
-
-        except Exception as e:
+            image = self._imread_unicode_safe(filename, cv2.IMREAD_UNCHANGED)
+        except Exception as e:  # 极端情况下仍可能抛异常
             logger.warning(f"Failed to load image for window/level: {e}")
+            return
+
+        if image is None:
+            logger.warning(f"Failed to decode image for window/level: {filename}")
+            return
+
+        # 转换为灰度（如果需要）
+        if image.ndim == 3:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # 保存为浮点数以保留精度
+        self.original_image = image.astype(np.float32)
+
+        # 初始化窗宽窗位
+        self.resetWindowLevel()
+
+    def _imread_unicode_safe(self, filename, flags=cv2.IMREAD_UNCHANGED):
+        """使用cv2读取支持Unicode路径的图像"""
+        path = os.fspath(filename)
+
+        try:
+            data = np.fromfile(path, dtype=np.uint8)
+        except OSError as exc:
+            logger.warning(f"Unable to read binary data from {path}: {exc}")
+            return None
+
+        if data.size == 0:
+            logger.warning(f"No data read from image file: {path}")
+            return None
+
+        image = cv2.imdecode(data, flags)
+        if image is None:
+            # 对于ASCII路径再尝试一次传统imread（兼容旧行为）
+            image = cv2.imread(path, flags)
+        return image
 
     def resizeEvent(self, event):
         if (
